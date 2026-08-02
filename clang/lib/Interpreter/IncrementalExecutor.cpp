@@ -34,6 +34,8 @@
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/MapperJITLinkMemoryManager.h"
+#include "llvm/ExecutionEngine/Orc/MemoryMapper.h"
+#include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/Orc/Shared/OrcRTBridge.h"
 #include "llvm/ExecutionEngine/Orc/Shared/SimpleRemoteEPCUtils.h"
 #include "llvm/ExecutionEngine/Orc/SimpleRemoteEPC.h"
@@ -76,6 +78,21 @@ createJITTargetMachineBuilder(const llvm::Triple &TT) {
 static llvm::Expected<std::unique_ptr<llvm::orc::LLJITBuilder>>
 createDefaultJITBuilder(llvm::orc::JITTargetMachineBuilder JTMB) {
   auto JITBuilder = std::make_unique<llvm::orc::LLJITBuilder>();
+  if (JTMB.getTargetTriple().isOSBinFormatCOFF()) {
+    // COFF ADDR32NB relocations encode RVAs relative to __ImageBase. Keep the
+    // synthetic image header and its sections in one ascending address range.
+    constexpr size_t COFFSlabSize = 64 * 1024 * 1024;
+    JITBuilder->setMemoryManagerCreator(
+        [COFFSlabSize](llvm::orc::ExecutionSession &) {
+          return llvm::orc::MapperJITLinkMemoryManager::CreateWithMapper<
+              llvm::orc::InProcessMemoryMapper>(COFFSlabSize);
+        });
+    JITBuilder->setObjectLinkingLayerCreator(
+        [](llvm::orc::ExecutionSession &ES,
+           llvm::jitlink::JITLinkMemoryManager &MemMgr) {
+          return std::make_unique<llvm::orc::ObjectLinkingLayer>(ES, MemMgr);
+        });
+  }
   JITBuilder->setJITTargetMachineBuilder(std::move(JTMB));
   JITBuilder->setPrePlatformSetup([](llvm::orc::LLJIT &J) {
     // Try to enable debugging of JIT'd code (only works with JITLink for
@@ -388,6 +405,15 @@ IncrementalExecutorBuilder::create(llvm::orc::ThreadSafeContext &TSC,
     if (!JB)
       return JB.takeError();
     JITBuilder = std::move(*JB);
+  }
+  if (TT.isOSBinFormatCOFF()) {
+    if (OrcRuntimePath.empty())
+      return llvm::make_error<llvm::StringError>(
+          "COFFPlatform requires an ORC runtime archive",
+          llvm::inconvertibleErrorCode());
+
+    JITBuilder->setPlatformSetUp(
+        llvm::orc::ExecutorNativePlatform(OrcRuntimePath));
   }
 
   llvm::Error Err = llvm::Error::success();

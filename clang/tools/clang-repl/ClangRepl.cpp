@@ -124,8 +124,8 @@ static llvm::Error sanitizeOopArguments(const char *ArgV0) {
           llvm::inconvertibleErrorCode());
   }
 
-  // Out-of-process executors require the ORC runtime. ORC Runtime Path
-  // resolution is done in Interpreter.cpp.
+  // Out-of-process executors and COFFPlatform require the ORC runtime. ORC
+  // runtime path resolution is done in IncrementalExecutor.cpp.
 
   // If -oop-executor was used but no value was specified then use a sensible
   // default.

@@ -432,11 +432,11 @@ IncrementalExecutorBuilder::create(llvm::orc::ThreadSafeContext &TSC,
 
 llvm::Error IncrementalExecutorBuilder::UpdateOrcRuntimePath(
     const clang::driver::Compilation &C) {
-  if (!IsOutOfProcess)
-    return llvm::Error::success();
-
   const clang::driver::Driver &D = C.getDriver();
   const clang::driver::ToolChain &TC = C.getDefaultToolChain();
+
+  if (!IsOutOfProcess && !TC.getTriple().isOSBinFormatCOFF())
+    return llvm::Error::success();
 
   llvm::SmallVector<std::string, 2> OrcRTLibNames;
 
@@ -452,11 +452,13 @@ llvm::Error IncrementalExecutorBuilder::UpdateOrcRuntimePath(
 
   OrcRTLibNames.push_back(CanonicalFilename.str());
 
-  // Derive legacy spelling (libclang_rt.orc_rt -> orc_rt)
+  // Derive legacy spelling (libclang_rt.orc_rt -> liborc_rt,
+  // clang_rt.orc_rt -> orc_rt).
   llvm::StringRef LegacySuffix = CanonicalFilename;
   if (LegacySuffix.consume_front("libclang_rt.")) {
     OrcRTLibNames.push_back(("lib" + LegacySuffix).str());
-  }
+  } else if (LegacySuffix.consume_front("clang_rt."))
+    OrcRTLibNames.push_back(LegacySuffix.str());
 
   // Extract directory
   llvm::SmallString<256> OrcRTDir(CompilerRTPath);

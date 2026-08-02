@@ -95,6 +95,7 @@ else() # not Apple
 
     set(ORC_SOURCES
       ${ORC_COMMON_SOURCES}
+      ../builtins/emutls.c
       coff_platform.cpp
       coff_platform.per_jd.cpp
       )

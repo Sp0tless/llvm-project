@@ -20,6 +20,8 @@
 #include "llvm/IR/Module.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Object/MachOUniversal.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include <string>
 
@@ -505,8 +507,15 @@ StaticLibraryDefinitionGenerator::StaticLibraryDefinitionGenerator(
 std::unique_ptr<DLLImportDefinitionGenerator>
 DLLImportDefinitionGenerator::Create(ExecutionSession &ES,
                                      ObjectLinkingLayer &L) {
+  return Create(ES, L, COFFImportSymbolTypes());
+}
+
+std::unique_ptr<DLLImportDefinitionGenerator>
+DLLImportDefinitionGenerator::Create(
+    ExecutionSession &ES, ObjectLinkingLayer &L,
+    COFFImportSymbolTypes ImportedSymbolTypes) {
   return std::unique_ptr<DLLImportDefinitionGenerator>(
-      new DLLImportDefinitionGenerator(ES, L));
+      new DLLImportDefinitionGenerator(ES, L, std::move(ImportedSymbolTypes)));
 }
 
 Error DLLImportDefinitionGenerator::tryToGenerate(
@@ -560,9 +569,28 @@ DLLImportDefinitionGenerator::createStubsGraph(const SymbolMap &Resolved) {
       G->createSection(getSectionName(), MemProt::Read | MemProt::Exec);
 
   for (auto &KV : Resolved) {
+    auto Type = ImportedSymbolTypes.find(*KV.first);
+    bool IsCallable =
+        Type == ImportedSymbolTypes.end() || Type->second == COFF::IMPORT_CODE;
+
+    DEBUG_WITH_TYPE("orc-coff-imports", {
+      dbgs() << "COFF DLL import \"" << *KV.first << "\" classified as ";
+      if (Type == ImportedSymbolTypes.end())
+        dbgs() << "code (fallback)";
+      else if (Type->second == COFF::IMPORT_CODE)
+        dbgs() << "code";
+      else if (Type->second == COFF::IMPORT_DATA)
+        dbgs() << "data";
+      else
+        dbgs() << "const data";
+      dbgs() << '\n';
+    });
+
     jitlink::Symbol &Target = G->addAbsoluteSymbol(
         *KV.first, KV.second.getAddress(), G->getPointerSize(),
-        jitlink::Linkage::Strong, jitlink::Scope::Local, false);
+        jitlink::Linkage::Strong,
+        IsCallable ? jitlink::Scope::Local : jitlink::Scope::Default,
+        IsCallable);
 
     // Create __imp_ symbol
     jitlink::Symbol &Ptr =
@@ -571,8 +599,10 @@ DLLImportDefinitionGenerator::createStubsGraph(const SymbolMap &Resolved) {
     Ptr.setLinkage(jitlink::Linkage::Strong);
     Ptr.setScope(jitlink::Scope::Default);
 
+    if (!IsCallable)
+      continue;
+
     // Create PLT stub
-    // FIXME: check PLT stub of data symbol is not accessed
     jitlink::Block &StubBlock =
         jitlink::x86_64::createPointerJumpStubBlock(*G, Sec, Ptr);
     G->addDefinedSymbol(StubBlock, 0, *KV.first, StubBlock.getSize(),

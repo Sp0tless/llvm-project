@@ -14,6 +14,7 @@
 #define LLVM_EXECUTIONENGINE_ORC_COFFCRUNTIMESUPPORT_H
 
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ExecutionEngine/Orc/COFF.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/ExecutorProcessControl.h"
 #include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
@@ -52,7 +53,8 @@ public:
 
   /// Adds symbol definitions of static version of msvc runtime libraries.
   LLVM_ABI Expected<std::vector<std::string>>
-  loadStaticVCRuntime(JITDylib &JD, bool DebugVersion = false);
+  loadStaticVCRuntime(JITDylib &JD, bool DebugVersion = false,
+                      COFFImportSymbolTypes *ImportedSymbolTypes = nullptr);
 
   /// Runs the initializer of static version of msvc runtime libraries.
   /// This must be called before calling any functions requiring c runtime (e.g.
@@ -63,7 +65,8 @@ public:
 
   /// Adds symbol definitions of dynamic version of msvc runtime libraries.
   LLVM_ABI Expected<std::vector<std::string>>
-  loadDynamicVCRuntime(JITDylib &JD, bool DebugVersion = false);
+  loadDynamicVCRuntime(JITDylib &JD, bool DebugVersion = false,
+                       COFFImportSymbolTypes *ImportedSymbolTypes = nullptr);
 
 private:
   COFFVCRuntimeBootstrapper(ExecutionSession &ES,
@@ -81,7 +84,8 @@ private:
 
   static Expected<MSVCToolchainPath> getMSVCToolchainPath();
   Error loadVCRuntime(JITDylib &JD, std::vector<std::string> &ImportedLibraries,
-                      ArrayRef<StringRef> VCLibs, ArrayRef<StringRef> UCRTLibs);
+                      ArrayRef<StringRef> VCLibs, ArrayRef<StringRef> UCRTLibs,
+                      COFFImportSymbolTypes *ImportedSymbolTypes);
 };
 
 } // namespace orc

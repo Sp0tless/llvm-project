@@ -172,9 +172,10 @@ COFFPlatform::Create(ObjectLinkingLayer &ObjLinkingLayer, JITDylib &PlatformJD,
     return GeneratorArchive.takeError();
 
   std::set<std::string> DylibsToPreload;
+  COFFImportSymbolTypes BootstrapImportSymbolTypes;
   auto OrcRuntimeArchiveGenerator = StaticLibraryDefinitionGenerator::Create(
       ObjLinkingLayer, nullptr, std::move(*GeneratorArchive),
-      COFFImportFileScanner(DylibsToPreload));
+      COFFImportFileScanner(DylibsToPreload, &BootstrapImportSymbolTypes));
   if (!OrcRuntimeArchiveGenerator)
     return OrcRuntimeArchiveGenerator.takeError();
 
@@ -208,9 +209,9 @@ COFFPlatform::Create(ObjectLinkingLayer &ObjLinkingLayer, JITDylib &PlatformJD,
   Error Err = Error::success();
   auto P = std::unique_ptr<COFFPlatform>(new COFFPlatform(
       ObjLinkingLayer, PlatformJD, std::move(*OrcRuntimeArchiveGenerator),
-      std::move(DylibsToPreload), std::move(OrcRuntimeArchiveBuffer),
-      std::move(RuntimeArchive), std::move(LoadDynLibrary), StaticVCRuntime,
-      VCRuntimePath, Err));
+      std::move(DylibsToPreload), std::move(BootstrapImportSymbolTypes),
+      std::move(OrcRuntimeArchiveBuffer), std::move(RuntimeArchive),
+      std::move(LoadDynLibrary), StaticVCRuntime, VCRuntimePath, Err));
   if (Err)
     return std::move(Err);
   return std::move(P);
@@ -259,6 +260,8 @@ static void addAliases(ExecutionSession &ES, SymbolAliasMap &Aliases,
 }
 
 Error COFFPlatform::setupJITDylib(JITDylib &JD) {
+  COFFImportSymbolTypes ImportedSymbolTypes;
+
   if (auto Err = JD.define(std::make_unique<COFFHeaderMaterializationUnit>(
           *this, COFFHeaderStartSymbol)))
     return Err;
@@ -286,8 +289,10 @@ Error COFFPlatform::setupJITDylib(JITDylib &JD) {
 
   if (!Bootstrapping) {
     auto ImportedLibs = StaticVCRuntime
-                            ? VCRuntimeBootstrap->loadStaticVCRuntime(JD)
-                            : VCRuntimeBootstrap->loadDynamicVCRuntime(JD);
+                            ? VCRuntimeBootstrap->loadStaticVCRuntime(
+                                  JD, false, &ImportedSymbolTypes)
+                            : VCRuntimeBootstrap->loadDynamicVCRuntime(
+                                  JD, false, &ImportedSymbolTypes);
     if (!ImportedLibs)
       return ImportedLibs.takeError();
     for (auto &Lib : *ImportedLibs)
@@ -296,9 +301,11 @@ Error COFFPlatform::setupJITDylib(JITDylib &JD) {
     if (StaticVCRuntime)
       if (auto Err = VCRuntimeBootstrap->initializeStaticVCRuntime(JD))
         return Err;
-  }
+  } else
+    ImportedSymbolTypes = std::move(BootstrapImportSymbolTypes);
 
-  JD.addGenerator(DLLImportDefinitionGenerator::Create(ES, ObjLinkingLayer));
+  JD.addGenerator(DLLImportDefinitionGenerator::Create(
+      ES, ObjLinkingLayer, std::move(ImportedSymbolTypes)));
   return Error::success();
 }
 
@@ -380,6 +387,7 @@ COFFPlatform::COFFPlatform(
     ObjectLinkingLayer &ObjLinkingLayer, JITDylib &PlatformJD,
     std::unique_ptr<StaticLibraryDefinitionGenerator> OrcRuntimeGenerator,
     std::set<std::string> DylibsToPreload,
+    COFFImportSymbolTypes BootstrapImportSymbolTypes,
     std::unique_ptr<MemoryBuffer> OrcRuntimeArchiveBuffer,
     std::unique_ptr<object::Archive> OrcRuntimeArchive,
     LoadDynamicLibrary LoadDynLibrary, bool StaticVCRuntime,
@@ -389,6 +397,7 @@ COFFPlatform::COFFPlatform(
       LoadDynLibrary(std::move(LoadDynLibrary)),
       OrcRuntimeArchiveBuffer(std::move(OrcRuntimeArchiveBuffer)),
       OrcRuntimeArchive(std::move(OrcRuntimeArchive)),
+      BootstrapImportSymbolTypes(std::move(BootstrapImportSymbolTypes)),
       StaticVCRuntime(StaticVCRuntime),
       COFFHeaderStartSymbol(ES.intern("__ImageBase")) {
   ErrorAsOutParameter _(Err);
@@ -405,9 +414,15 @@ COFFPlatform::COFFPlatform(
   }
   VCRuntimeBootstrap = std::move(*VCRT);
 
+  this->BootstrapImportSymbolTypes[rt::DispatchName] = COFF::IMPORT_CODE;
+  this->BootstrapImportSymbolTypes[rt::DispatchCtxName] = COFF::IMPORT_DATA;
+
   auto ImportedLibs =
-      StaticVCRuntime ? VCRuntimeBootstrap->loadStaticVCRuntime(PlatformJD)
-                      : VCRuntimeBootstrap->loadDynamicVCRuntime(PlatformJD);
+      StaticVCRuntime
+          ? VCRuntimeBootstrap->loadStaticVCRuntime(
+                PlatformJD, false, &this->BootstrapImportSymbolTypes)
+          : VCRuntimeBootstrap->loadDynamicVCRuntime(
+                PlatformJD, false, &this->BootstrapImportSymbolTypes);
   if (!ImportedLibs) {
     Err = ImportedLibs.takeError();
     return;

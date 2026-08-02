@@ -141,6 +141,7 @@ private:
       ObjectLinkingLayer &ObjLinkingLayer, JITDylib &PlatformJD,
       std::unique_ptr<StaticLibraryDefinitionGenerator> OrcRuntimeGenerator,
       std::set<std::string> DylibsToPreload,
+      COFFImportSymbolTypes BootstrapImportSymbolTypes,
       std::unique_ptr<MemoryBuffer> OrcRuntimeArchiveBuffer,
       std::unique_ptr<object::Archive> OrcRuntimeArchive,
       LoadDynamicLibrary LoadDynLibrary, bool StaticVCRuntime,
@@ -184,6 +185,7 @@ private:
   std::unique_ptr<COFFVCRuntimeBootstrapper> VCRuntimeBootstrap;
   std::unique_ptr<MemoryBuffer> OrcRuntimeArchiveBuffer;
   std::unique_ptr<object::Archive> OrcRuntimeArchive;
+  COFFImportSymbolTypes BootstrapImportSymbolTypes;
   bool StaticVCRuntime;
 
   SymbolStringPtr COFFHeaderStartSymbol;

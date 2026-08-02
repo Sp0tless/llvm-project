@@ -15,6 +15,7 @@
 
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/ExecutionEngine/JITSymbol.h"
+#include "llvm/ExecutionEngine/Orc/COFF.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
@@ -362,13 +363,18 @@ public:
   static std::unique_ptr<DLLImportDefinitionGenerator>
   Create(ExecutionSession &ES, ObjectLinkingLayer &L);
 
+  static std::unique_ptr<DLLImportDefinitionGenerator>
+  Create(ExecutionSession &ES, ObjectLinkingLayer &L,
+         COFFImportSymbolTypes ImportedSymbolTypes);
+
   Error tryToGenerate(LookupState &LS, LookupKind K, JITDylib &JD,
                       JITDylibLookupFlags JDLookupFlags,
                       const SymbolLookupSet &Symbols) override;
 
 private:
-  DLLImportDefinitionGenerator(ExecutionSession &ES, ObjectLinkingLayer &L)
-      : ES(ES), L(L) {}
+  DLLImportDefinitionGenerator(ExecutionSession &ES, ObjectLinkingLayer &L,
+                               COFFImportSymbolTypes ImportedSymbolTypes)
+      : ES(ES), L(L), ImportedSymbolTypes(std::move(ImportedSymbolTypes)) {}
 
   static Expected<unsigned> getTargetPointerSize(const Triple &TT);
   static Expected<llvm::endianness> getEndianness(const Triple &TT);
@@ -381,6 +387,7 @@ private:
 
   ExecutionSession &ES;
   ObjectLinkingLayer &L;
+  COFFImportSymbolTypes ImportedSymbolTypes;
 };
 
 } // end namespace orc

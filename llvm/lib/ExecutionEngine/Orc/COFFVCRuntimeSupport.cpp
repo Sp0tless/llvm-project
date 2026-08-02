@@ -39,31 +39,36 @@ COFFVCRuntimeBootstrapper::COFFVCRuntimeBootstrapper(
 
 Expected<std::vector<std::string>>
 COFFVCRuntimeBootstrapper::loadStaticVCRuntime(JITDylib &JD,
-                                               bool DebugVersion) {
+                                               bool DebugVersion,
+                                               COFFImportSymbolTypes
+                                                   *ImportedSymbolTypes) {
   StringRef VCLibs[] = {"libvcruntime.lib", "libcmt.lib", "libcpmt.lib"};
   StringRef UCRTLibs[] = {"libucrt.lib"};
   std::vector<std::string> ImportedLibraries;
   if (auto Err = loadVCRuntime(JD, ImportedLibraries, ArrayRef(VCLibs),
-                               ArrayRef(UCRTLibs)))
+                               ArrayRef(UCRTLibs), ImportedSymbolTypes))
     return std::move(Err);
   return ImportedLibraries;
 }
 
 Expected<std::vector<std::string>>
 COFFVCRuntimeBootstrapper::loadDynamicVCRuntime(JITDylib &JD,
-                                                bool DebugVersion) {
+                                                bool DebugVersion,
+                                                COFFImportSymbolTypes
+                                                    *ImportedSymbolTypes) {
   StringRef VCLibs[] = {"vcruntime.lib", "msvcrt.lib", "msvcprt.lib"};
   StringRef UCRTLibs[] = {"ucrt.lib"};
   std::vector<std::string> ImportedLibraries;
   if (auto Err = loadVCRuntime(JD, ImportedLibraries, ArrayRef(VCLibs),
-                               ArrayRef(UCRTLibs)))
+                               ArrayRef(UCRTLibs), ImportedSymbolTypes))
     return std::move(Err);
   return ImportedLibraries;
 }
 
 Error COFFVCRuntimeBootstrapper::loadVCRuntime(
     JITDylib &JD, std::vector<std::string> &ImportedLibraries,
-    ArrayRef<StringRef> VCLibs, ArrayRef<StringRef> UCRTLibs) {
+    ArrayRef<StringRef> VCLibs, ArrayRef<StringRef> UCRTLibs,
+    COFFImportSymbolTypes *ImportedSymbolTypes) {
   MSVCToolchainPath Path;
   if (!RuntimePath.empty()) {
     Path.UCRTSdkLib = RuntimePath;
@@ -86,7 +91,7 @@ Error COFFVCRuntimeBootstrapper::loadVCRuntime(
     std::set<std::string> NewImportedLibraries;
     auto G = StaticLibraryDefinitionGenerator::Load(
         ObjLinkingLayer, LibPath.c_str(),
-        COFFImportFileScanner(NewImportedLibraries));
+        COFFImportFileScanner(NewImportedLibraries, ImportedSymbolTypes));
     if (!G)
       return G.takeError();
 

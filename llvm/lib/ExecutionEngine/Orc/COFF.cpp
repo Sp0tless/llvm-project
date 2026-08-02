@@ -8,6 +8,7 @@
 
 #include "llvm/ExecutionEngine/Orc/COFF.h"
 #include "llvm/Object/Binary.h"
+#include "llvm/Object/COFFImportFile.h"
 
 #define DEBUG_TYPE "orc"
 
@@ -28,6 +29,30 @@ Expected<bool> COFFImportFileScanner::operator()(object::Archive &A,
   // loadable).
   if ((*Bin)->isCOFFImportFile()) {
     ImportedDynamicLibraries.insert((*Bin)->getFileName().str());
+
+    if (ImportedSymbolTypes) {
+      auto &ImportFile = cast<object::COFFImportFile>(**Bin);
+      const auto *Header = ImportFile.getCOFFImportHeader();
+      StringRef Buffer = MemberBuf.getBuffer();
+      if (Buffer.size() <= sizeof(*Header))
+        return make_error<StringError>("COFF import file has no symbol name",
+                                       inconvertibleErrorCode());
+
+      StringRef TargetName =
+          Buffer.drop_front(sizeof(*Header)).split('\0').first;
+      if (TargetName.empty())
+        return make_error<StringError>(
+            "COFF import file has an empty symbol name",
+            inconvertibleErrorCode());
+
+      auto Type = static_cast<COFF::ImportType>(Header->getType());
+      auto [I, Inserted] = ImportedSymbolTypes->try_emplace(TargetName, Type);
+      if (!Inserted && I->second != Type)
+        return make_error<StringError>(
+            "conflicting COFF import types for symbol " + TargetName,
+            inconvertibleErrorCode());
+    }
+
     return false;
   }
 

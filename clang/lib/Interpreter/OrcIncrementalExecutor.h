@@ -16,6 +16,7 @@
 #include "clang/Interpreter/IncrementalExecutor.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
@@ -26,6 +27,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 
 namespace llvm {
 class Error;
@@ -47,6 +49,11 @@ class OrcIncrementalExecutor : public IncrementalExecutor {
 
   llvm::DenseMap<const PartialTranslationUnit *, llvm::orc::ResourceTrackerSP>
       ResourceTrackers;
+
+#ifdef _WIN32
+  llvm::SmallVector<std::string, 4> DynamicTLSInitializers;
+  uint64_t NextDynamicTLSInitializerId = 0;
+#endif
 
 protected:
   OrcIncrementalExecutor(llvm::orc::ThreadSafeContext &TSC);

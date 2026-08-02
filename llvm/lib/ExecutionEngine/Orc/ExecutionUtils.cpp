@@ -546,13 +546,20 @@ Error DLLImportDefinitionGenerator::tryToGenerate(
       It->second = KV.second;
   }
 
+  // This generator is a fallback for definitions outside JD. Probe the rest
+  // of the link order weakly so that symbols not found there can be handled by
+  // a later generator attached to JD (for example a static archive).
   for (auto &KV : ToLookUpSymbols)
-    LookupSet.add(ES.intern(KV.first), KV.second);
+    LookupSet.add(ES.intern(KV.first),
+                  SymbolLookupFlags::WeaklyReferencedSymbol);
 
   auto Resolved = ES.lookup(LinkOrder, LookupSet, LookupKind::Static,
                             SymbolState::Resolved);
   if (!Resolved)
     return Resolved.takeError();
+
+  if (Resolved->empty())
+    return Error::success();
 
   auto G = createStubsGraph(*Resolved);
   if (!G)

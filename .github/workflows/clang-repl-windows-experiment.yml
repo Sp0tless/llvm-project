@@ -1,0 +1,287 @@
+name: Windows clang-repl COFF comparison
+run-name: clang-repl COFF - ${{ inputs.experiment_ref }} vs ${{ inputs.baseline_ref }}
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      experiment_ref:
+        description: Ref in Sp0tless/llvm-project to test
+        required: true
+        type: string
+        default: clang-repl-windows-coff
+      baseline_ref:
+        description: Ref in llvm/llvm-project to use as the baseline
+        required: true
+        type: string
+        default: 3cc4656425ae7227e01e8a646de27123dc9ae7c3
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.experiment_ref }}-${{ inputs.baseline_ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: ${{ matrix.label }}
+    runs-on: windows-2022
+    timeout-minutes: 300
+    continue-on-error: ${{ matrix.allow_failure }}
+    env:
+      CL: /utf-8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Experiment
+            artifact: experiment
+            repository: ${{ github.repository }}
+            ref: ${{ inputs.experiment_ref }}
+            allow_failure: false
+          - label: Unmodified upstream baseline
+            artifact: baseline
+            repository: llvm/llvm-project
+            ref: ${{ inputs.baseline_ref }}
+            allow_failure: true
+
+    steps:
+      - name: Checkout experiment harness
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.experiment_ref }}
+          path: harness
+          persist-credentials: false
+          sparse-checkout: clang/test/Interpreter/Windows
+
+      - name: Checkout source under test
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.ref }}
+          path: source
+          persist-credentials: false
+
+      - name: Configure MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+
+      - name: Record source metadata
+        shell: pwsh
+        run: |
+          $artifactDirectory = "artifacts/${{ matrix.artifact }}"
+          New-Item -ItemType Directory -Force $artifactDirectory | Out-Null
+          $sourceCommit = git -C source rev-parse HEAD
+          @"
+          label: ${{ matrix.label }}
+          repository: ${{ matrix.repository }}
+          requested-ref: ${{ matrix.ref }}
+          source-commit: $sourceCommit
+          runner: ${{ runner.os }} ${{ runner.arch }}
+          "@ | Set-Content "$artifactDirectory/metadata.txt" -Encoding utf8NoBOM
+
+      - name: Configure ORC runtime
+        run: >-
+          cmake -S source/runtimes -B runtime-build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=cl
+          -DCMAKE_CXX_COMPILER=cl
+          -DLLVM_ENABLE_RUNTIMES=compiler-rt
+          -DCOMPILER_RT_BUILD_BUILTINS=OFF
+          -DCOMPILER_RT_BUILD_CTX_PROFILE=OFF
+          -DCOMPILER_RT_BUILD_GWP_ASAN=OFF
+          -DCOMPILER_RT_BUILD_LIBFUZZER=OFF
+          -DCOMPILER_RT_BUILD_MEMPROF=OFF
+          -DCOMPILER_RT_BUILD_ORC=ON
+          -DCOMPILER_RT_BUILD_PROFILE=OFF
+          -DCOMPILER_RT_BUILD_SANITIZERS=OFF
+          -DCOMPILER_RT_BUILD_XRAY=OFF
+          -DCOMPILER_RT_INCLUDE_TESTS=OFF
+
+      - name: Build and stage ORC runtime
+        shell: pwsh
+        run: |
+          cmake --build runtime-build --target orc --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $versionFile = Get-Content source/cmake/Modules/LLVMVersion.cmake
+          $majorLine = $versionFile | Select-String 'set\(LLVM_VERSION_MAJOR ([0-9]+)\)'
+          if (-not $majorLine) { throw 'Could not determine LLVM major version' }
+          $major = $majorLine.Matches[0].Groups[1].Value
+          $runtimeLibraries = @(
+            Get-ChildItem runtime-build -Recurse -File -Filter 'orc_rt-x86_64.lib'
+          )
+          if ($runtimeLibraries.Count -ne 1) {
+            $paths = ($runtimeLibraries.FullName -join ', ')
+            throw "Expected one ORC runtime library, found $($runtimeLibraries.Count): $paths"
+          }
+          $runtimeLibrary = $runtimeLibraries[0].FullName
+          Write-Host "Staging ORC runtime from $runtimeLibrary"
+          $runtimeDirectory = "build/lib/clang/$major/lib/x86_64-pc-windows-msvc"
+          New-Item -ItemType Directory -Force $runtimeDirectory | Out-Null
+          Copy-Item -LiteralPath $runtimeLibrary -Destination "$runtimeDirectory/orc_rt.lib"
+
+      - name: Configure clang-repl
+        run: >-
+          cmake -S source/llvm -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DLLVM_ENABLE_PROJECTS=clang
+          -DLLVM_TARGETS_TO_BUILD=X86
+          -DLLVM_ENABLE_ASSERTIONS=ON
+          -DLLVM_INCLUDE_BENCHMARKS=OFF
+          -DLLVM_INCLUDE_DOCS=OFF
+          -DLLVM_INCLUDE_EXAMPLES=OFF
+          -DLLVM_INCLUDE_TESTS=OFF
+          -DLLVM_ENABLE_LIBEDIT=OFF
+          -DLLVM_ENABLE_TERMINFO=OFF
+          -DCLANG_ENABLE_ARCMT=OFF
+          -DCLANG_ENABLE_STATIC_ANALYZER=OFF
+
+      - name: Build clang-repl
+        run: >-
+          cmake --build build
+          --target clang-repl clang-resource-headers
+          --parallel
+
+      - name: Run experiments
+        shell: pwsh
+        run: |
+          $parameters = @{
+            ClangRepl = "build/bin/clang-repl.exe"
+            SourceDirectory = "source"
+            OutputDirectory = "artifacts/${{ matrix.artifact }}"
+            RunLabel = "${{ matrix.label }}"
+            TimeoutSeconds = 60
+          }
+          if ("${{ matrix.artifact }}" -eq "baseline") {
+            $parameters.AllowFailures = $true
+          }
+          & ./harness/clang/test/Interpreter/Windows/run-experiments.ps1 @parameters
+
+      - name: Stage runnable clang-repl bundle
+        if: always()
+        shell: pwsh
+        run: |
+          $clangRepl = "build/bin/clang-repl.exe"
+          if (-not (Test-Path -LiteralPath $clangRepl)) {
+            Write-Warning "clang-repl was not built; skipping runnable bundle"
+            exit 0
+          }
+
+          $versionFile = Get-Content source/cmake/Modules/LLVMVersion.cmake
+          $majorLine = $versionFile | Select-String 'set\(LLVM_VERSION_MAJOR ([0-9]+)\)'
+          if (-not $majorLine) { throw 'Could not determine LLVM major version' }
+          $major = $majorLine.Matches[0].Groups[1].Value
+
+          $resourceDirectory = "build/lib/clang/$major"
+          $resourceHeaders = "$resourceDirectory/include"
+          $runtimeLibrary =
+            "$resourceDirectory/lib/x86_64-pc-windows-msvc/orc_rt.lib"
+          foreach ($path in @($clangRepl, $resourceHeaders, $runtimeLibrary)) {
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "Required runnable bundle component is missing: $path"
+            }
+          }
+
+          $bundleRoot =
+            "bundles/${{ matrix.artifact }}/clang-repl-windows-x86_64"
+          New-Item -ItemType Directory -Force "$bundleRoot/bin" | Out-Null
+          New-Item -ItemType Directory -Force "$bundleRoot/lib/clang" | Out-Null
+          New-Item -ItemType Directory -Force "$bundleRoot/licenses" | Out-Null
+
+          Copy-Item -LiteralPath $clangRepl -Destination "$bundleRoot/bin"
+          Copy-Item -LiteralPath $resourceDirectory `
+            -Destination "$bundleRoot/lib/clang" -Recurse
+          Copy-Item -LiteralPath "harness/clang/test/Interpreter/Windows" `
+            -Destination "$bundleRoot/tests" -Recurse
+          Copy-Item -LiteralPath "source/llvm/LICENSE.TXT" `
+            -Destination "$bundleRoot/licenses/llvm-LICENSE.txt"
+          Copy-Item -LiteralPath "source/clang/LICENSE.TXT" `
+            -Destination "$bundleRoot/licenses/clang-LICENSE.txt"
+          Copy-Item -LiteralPath "artifacts/${{ matrix.artifact }}/metadata.txt" `
+            -Destination "$bundleRoot/build-metadata.txt"
+
+          @'
+          [CmdletBinding()]
+          param(
+            [Parameter(ValueFromRemainingArguments = $true)]
+            [string[]]$ClangReplArguments
+          )
+
+          $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+          & "$root/bin/clang-repl.exe" `
+            -Xcc -fno-delayed-template-parsing @ClangReplArguments
+          exit $LASTEXITCODE
+          '@ | Set-Content "$bundleRoot/run-clang-repl.ps1" -Encoding utf8NoBOM
+
+          @'
+          [CmdletBinding()]
+          param(
+            [ValidateRange(1, 600)]
+            [int]$TimeoutSeconds = 60
+          )
+
+          $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+          & "$root/tests/run-experiments.ps1" `
+            -ClangRepl "$root/bin/clang-repl.exe" `
+            -SourceDirectory $root `
+            -OutputDirectory "$root/results" `
+            -RunLabel "Downloaded GitHub Actions bundle" `
+            -TimeoutSeconds $TimeoutSeconds
+          exit $LASTEXITCODE
+          '@ | Set-Content "$bundleRoot/run-tests.ps1" -Encoding utf8NoBOM
+
+          @(
+            '# Windows clang-repl COFF experiment bundle'
+            ''
+            'This is a Release build from the diagnostic workflow, not an official LLVM release.'
+            'Use Windows x64 with the Visual Studio 2022 C++ workload and Windows SDK installed.'
+            ''
+            'Interactive REPL:'
+            '  ./run-clang-repl.ps1'
+            ''
+            'Run the included experiments:'
+            '  ./run-tests.ps1'
+            ''
+            'The matching ORC runtime and Clang resource headers are included under lib/clang.'
+            'Debug symbols are not included.'
+          ) | Set-Content "$bundleRoot/README.md" -Encoding utf8NoBOM
+
+          & dumpbin.exe /dependents $clangRepl |
+            Set-Content "$bundleRoot/dependencies.txt" -Encoding utf8NoBOM
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $hashTargets = @(
+            "$bundleRoot/bin/clang-repl.exe",
+            "$bundleRoot/lib/clang/$major/lib/x86_64-pc-windows-msvc/orc_rt.lib"
+          )
+          $hashLines = foreach ($path in $hashTargets) {
+            $hash = Get-FileHash -LiteralPath $path -Algorithm SHA256
+            $relative = [IO.Path]::GetRelativePath($bundleRoot, $path)
+            "$($hash.Hash.ToLowerInvariant())  $($relative.Replace('\', '/'))"
+          }
+          $hashLines | Set-Content "$bundleRoot/SHA256SUMS.txt" -Encoding ascii
+
+      - name: Upload transcripts
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: clang-repl-windows-${{ matrix.artifact }}-${{ github.run_id }}
+          path: |
+            artifacts/${{ matrix.artifact }}/*.md
+            artifacts/${{ matrix.artifact }}/*.txt
+            artifacts/${{ matrix.artifact }}/*.log
+          retention-days: 90
+
+      - name: Upload runnable bundle
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: clang-repl-windows-bundle-${{ matrix.artifact }}-${{ github.run_id }}
+          path: bundles/${{ matrix.artifact }}/
+          if-no-files-found: ignore
+          retention-days: 30

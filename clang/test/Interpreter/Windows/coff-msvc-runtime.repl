@@ -1,0 +1,37 @@
+#include <iostream>
+#include <locale>
+#include <sstream>
+#include <stdexcept>
+#include <thread>
+
+std::istringstream test_input{"37"};
+auto *original_cin_buffer = std::cin.rdbuf(test_input.rdbuf());
+int input_value = 0;
+std::cin >> input_value;
+std::cin.rdbuf(original_cin_buffer);
+std::cout << "streams=" << input_value << " tied=" << (std::cin.tie() == &std::cout) << '\n';
+std::cout << "locale=" << std::locale::classic().name() << '\n';
+
+void throw_cross_ptu() { throw std::runtime_error("cross-ptu"); }
+try { throw_cross_ptu(); } catch (const std::exception &e) { std::cout << "exception=" << e.what() << '\n'; }
+
+struct RuntimeBase { virtual ~RuntimeBase() = default; };
+struct RuntimeDerived : RuntimeBase { int value = 42; };
+RuntimeBase *runtime_base = new RuntimeDerived;
+auto *runtime_derived = dynamic_cast<RuntimeDerived *>(runtime_base);
+std::cout << "rtti=" << (runtime_derived ? runtime_derived->value : -1) << '\n';
+delete runtime_base;
+
+int guarded_init_count = 0;
+int guarded_a = 0;
+int guarded_b = 0;
+int make_guarded_value() { ++guarded_init_count; return 77; }
+int &guarded_value() { static int value = make_guarded_value(); return value; }
+{ std::thread a([] { guarded_a = guarded_value(); }); std::thread b([] { guarded_b = guarded_value(); }); a.join(); b.join(); }
+std::cout << "guarded=" << guarded_a << ',' << guarded_b << " count=" << guarded_init_count << '\n';
+
+template <class T> T twice(T value) { return value + value; }
+int first_twice() { return twice(21); }
+int second_twice() { return twice(10); }
+std::cout << "template=" << first_twice() << ',' << second_twice() << '\n';
+%quit

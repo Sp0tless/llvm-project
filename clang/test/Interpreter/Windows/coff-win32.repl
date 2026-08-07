@@ -1,0 +1,23 @@
+#include <iostream>
+#include <windows.h>
+
+DWORD process_id = GetCurrentProcessId();
+char system_directory[MAX_PATH] = {};
+UINT system_directory_size = GetSystemDirectoryA(system_directory, MAX_PATH);
+HANDLE event_handle = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+BOOL event_set = event_handle ? SetEvent(event_handle) : FALSE;
+DWORD event_wait = event_handle ? WaitForSingleObject(event_handle, 1000) : WAIT_FAILED;
+BOOL event_closed = event_handle ? CloseHandle(event_handle) : FALSE;
+bool kernel32_ok = process_id != 0 && system_directory_size != 0 && system_directory_size < MAX_PATH && event_set && event_wait == WAIT_OBJECT_0 && event_closed;
+std::cout << "win32-kernel32=" << kernel32_ok << '\n';
+
+extern "C" __declspec(dllimport) int ClangReplDefinitelyMissingFunction();
+ClangReplDefinitelyMissingFunction();
+%undo
+std::cout << "undo-recovered=1\n";
+%lib user32.dll
+HWND desktop_window = GetDesktopWindow();
+int screen_width = GetSystemMetrics(SM_CXSCREEN);
+int screen_height = GetSystemMetrics(SM_CYSCREEN);
+std::cout << "win32-user32=" << (desktop_window != nullptr && screen_width >= 0 && screen_height >= 0) << '\n';
+%quit

@@ -1,0 +1,26 @@
+#include <atomic>
+#include <iostream>
+#include <thread>
+#include <vector>
+
+thread_local int tls_x = 1;
+thread_local int tls_y = 2;
+int *main_tls_x = &tls_x;
+int *main_tls_y = &tls_y;
+std::atomic<int> static_tls_ok{0};
+{ std::vector<std::thread> threads; for (int i = 0; i < 2; ++i) threads.emplace_back([] { bool ok = tls_x == 1 && tls_y == 2 && &tls_x != main_tls_x && &tls_y != main_tls_y && &tls_x != &tls_y; tls_x = 11; tls_y = 22; ok = ok && tls_x == 11 && tls_y == 22; if (ok) ++static_tls_ok; }); for (auto &thread : threads) thread.join(); }
+std::cout << "tls-static=" << static_tls_ok.load() << " main=" << tls_x << ',' << tls_y << '\n';
+
+std::atomic<int> dynamic_tls_inits{0};
+int make_dynamic_tls() { return 100 + 1 + dynamic_tls_inits.fetch_add(1); }
+thread_local int dynamic_tls = make_dynamic_tls();
+int main_dynamic_tls = dynamic_tls;
+int worker_dynamic_a = 0;
+int worker_dynamic_b = 0;
+{ std::thread a([] { worker_dynamic_a = dynamic_tls; }); std::thread b([] { worker_dynamic_b = dynamic_tls; }); a.join(); b.join(); }
+bool dynamic_tls_ok = main_dynamic_tls == 101 && worker_dynamic_a != worker_dynamic_b && worker_dynamic_a != main_dynamic_tls && worker_dynamic_b != main_dynamic_tls && main_dynamic_tls + worker_dynamic_a + worker_dynamic_b == 306;
+std::cout << "tls-dynamic=" << dynamic_tls_ok << " count=" << dynamic_tls_inits.load() << '\n';
+
+thread_local int dependent_tls = dynamic_tls + 1000;
+std::cout << "tls-dependency=" << dependent_tls << " source=" << dynamic_tls << " count=" << dynamic_tls_inits.load() << '\n';
+%quit

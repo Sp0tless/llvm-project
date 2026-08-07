@@ -1,0 +1,9 @@
+#include <cstdio>
+#include <cstdlib>
+#include <thread>
+
+void reentry_exit_callback() {}
+struct ReentrantGlobal { ReentrantGlobal() { std::thread worker([] { std::atexit(reentry_exit_callback); }); worker.join(); std::puts("initializer-reentry=1"); std::fflush(stdout); } };
+ReentrantGlobal reentrant_global;
+std::puts("initializer-after=1");
+%quit

@@ -1,0 +1,10 @@
+#include <atomic>
+#include <iostream>
+#include <thread>
+
+std::atomic<int> tls_dtors{0};
+struct TLSObject { int value; TLSObject(int value) : value(value) {} ~TLSObject() { ++tls_dtors; } };
+thread_local TLSObject tls_object{7};
+{ std::thread worker([] { std::cout << "tls-object-value=" << tls_object.value << '\n'; }); worker.join(); }
+std::cout << "tls-dtor-count=" << tls_dtors.load() << '\n';
+%quit

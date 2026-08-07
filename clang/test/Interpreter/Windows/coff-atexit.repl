@@ -1,0 +1,9 @@
+#include <cstdio>
+#include <cstdlib>
+
+void exit_first() { std::puts("atexit-first"); }
+void exit_second() { std::puts("atexit-second"); }
+std::atexit(exit_first);
+std::atexit(exit_second);
+std::puts("atexit-registered");
+%quit

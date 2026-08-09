@@ -2344,11 +2344,15 @@ void Sema::ActOnPopScope(SourceLocation Loc, Scope *S) {
     if (LabelDecl *LD = dyn_cast<LabelDecl>(D))
       CheckPoppedLabel(LD, *this, addDiag);
 
-    // Partial translation units that are created in incremental processing must
-    // not clean up the IdResolver because PTUs should take into account the
-    // declarations that came from previous PTUs.
-    if (!PP.isIncrementalProcessingEnabled() || getLangOpts().ObjC ||
-        getLangOpts().CPlusPlus)
+    // File-scope C declarations from partial translation units must remain in
+    // the IdResolver so that later PTUs can find them. Function-scope names,
+    // including parameters, locals, and labels, must still be removed when
+    // their scope ends.
+    bool KeepIncrementalCFileDecl =
+        PP.isIncrementalProcessingEnabled() && !getLangOpts().ObjC &&
+        !getLangOpts().CPlusPlus &&
+        (S == TUScope || D->isImplicit());
+    if (!KeepIncrementalCFileDecl)
       IdResolver.RemoveDecl(D);
 
     // Warn on it if we are shadowing a declaration.

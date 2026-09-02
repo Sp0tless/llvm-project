@@ -27,9 +27,6 @@ namespace llvm {
 namespace orc {
 namespace rt_bootstrap {
 
-/// Adds executor-side wrappers for the run-as function proxies.
-void addRunAsFunctionWrappersTo(StringMap<ExecutorAddr> &M);
-
 /// Adds all default target-process bootstrap wrappers.
 void addTo(StringMap<ExecutorAddr> &M);
 

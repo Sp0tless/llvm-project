@@ -19,8 +19,6 @@
 #include "llvm/Support/Process.h"
 #include "llvm/TargetParser/Host.h"
 
-#include "TargetProcess/OrcRTBootstrap.h"
-
 #define DEBUG_TYPE "orc"
 
 namespace llvm::orc {

@@ -20,6 +20,13 @@
 
 namespace llvm::orc {
 
+namespace rt_bootstrap {
+
+/// Adds executor-side wrappers for the run-as function proxies.
+LLVM_ABI void addRunAsFunctionWrappersTo(StringMap<ExecutorAddr> &M);
+
+} // namespace rt_bootstrap
+
 LLVM_ABI void addDefaultBootstrapValuesForHostProcess(
     StringMap<std::vector<char>> &BootstrapMap,
     StringMap<ExecutorAddr> &BootstrapSymbols);
